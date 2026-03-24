@@ -1,7 +1,7 @@
 # EEG-to-Text: Neural Decoding of Language from Brain Signals
 
 > **S4D Encoder + BART Decoder** — Translating word-level EEG recordings into natural language text using Structured State Spaces and pretrained language models.
-**Dataset in pickle format is available in https://drive.google.com/drive/folders/1TWMDhZFfOhglPuUnT2YZMpEHe3T_3HPu?usp=sharing**
+**Dataset in pickle format is available in https://drive.google.com/drive/folders/1lMniHAVsMShPFzPpVZr3SH3mdq7qrElu?usp=sharing**
 ---
 
 ## Table of Contents
