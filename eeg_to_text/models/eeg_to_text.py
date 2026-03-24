@@ -340,6 +340,154 @@ class EEGToTextModel(nn.Module):
         self.bart.config.use_cache = False  # restore for training
         return tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
+
+        # ────────────────────────────────────────────────────────────────────
+    # Greedy generation WITH cross-attention extraction (for heatmaps)
+    # ────────────────────────────────────────────────────────────────────
+    @torch.no_grad()
+    def generate_with_cross_attention(
+        self,
+        eeg: torch.Tensor,
+        eeg_mask: torch.Tensor,
+        tokenizer: BartTokenizer,
+        max_length: int = 56,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 3,
+    ) -> Tuple[List[str], torch.Tensor]:
+        """
+        Greedy decoding that captures cross-attention weights at every step.
+
+        Unlike generate_text() (which calls bart.generate()), this runs the
+        decoder loop manually so we can collect output_attentions at each
+        autoregressive step.
+
+        Args:
+            eeg:       (B, L_eeg, eeg_dim)
+            eeg_mask:  (B, L_eeg)
+            tokenizer: BART tokenizer
+            max_length: maximum tokens to generate
+            repetition_penalty: penalise already-generated tokens
+            no_repeat_ngram_size: block repeated n-grams
+
+        Returns:
+            texts:       List of B decoded strings
+            cross_attns: (B, n_layers, n_heads, T_out, L_eeg)
+                         Attention weights per layer/head/decode-step/EEG-position.
+        """
+        B = eeg.size(0)
+        device = eeg.device
+
+        eeg_hidden = self.encode_eeg(eeg, eeg_mask=eeg_mask)
+        encoder_out = BaseModelOutput(last_hidden_state=eeg_hidden)
+
+        # Force eager attention so HF returns real attention weight tensors
+        # (SDPA returns None even when output_attentions=True)
+        saved_attn_impl = getattr(self.bart.config, "_attn_implementation", None)
+        self.bart.config._attn_implementation = "eager"
+        # Also patch each decoder layer's attention module
+        _patched_layers = []
+        for layer in self.bart.model.decoder.layers:
+            for attn_mod in [layer.self_attn, layer.encoder_attn]:
+                if hasattr(attn_mod, "_attn_implementation"):
+                    _patched_layers.append((attn_mod, attn_mod._attn_implementation))
+                    attn_mod._attn_implementation = "eager"
+                elif hasattr(attn_mod, "config") and hasattr(attn_mod.config, "_attn_implementation"):
+                    _patched_layers.append((attn_mod.config, attn_mod.config._attn_implementation))
+                    attn_mod.config._attn_implementation = "eager"
+
+        self.bart.config.use_cache = True
+
+        bos_id = self.bart.config.decoder_start_token_id
+        eos_id = self.bart.config.eos_token_id
+        pad_id = self.bart.config.pad_token_id
+
+        input_ids = torch.full((B, 1), bos_id, dtype=torch.long, device=device)
+        finished = torch.zeros(B, dtype=torch.bool, device=device)
+        past_key_values = None
+
+        # Collect cross-attention per step: list of (n_layers,) tuples
+        # Each layer tensor: (B, n_heads, 1, L_eeg)
+        step_cross_attns = []
+
+        for step in range(max_length - 1):
+            out = self.bart(
+                encoder_outputs=encoder_out,
+                attention_mask=eeg_mask,
+                decoder_input_ids=input_ids if past_key_values is None else input_ids[:, -1:],
+                past_key_values=past_key_values,
+                output_attentions=True,
+                return_dict=True,
+            )
+            past_key_values = out.past_key_values
+
+            # Collect cross-attention: tuple of (B, n_heads, 1, L_eeg) per layer
+            if out.cross_attentions is not None:
+                # Stack layers: (n_layers, B, n_heads, 1, L_eeg)
+                layer_stack = torch.stack(
+                    [a for a in out.cross_attentions if a is not None], dim=0
+                )
+                step_cross_attns.append(layer_stack)
+
+            # Greedy next token
+            logits = out.logits[:, -1, :]  # (B, V)
+
+            # Repetition penalty
+            if repetition_penalty > 1.0:
+                for b in range(B):
+                    for prev_id in input_ids[b].unique():
+                        if logits[b, prev_id] > 0:
+                            logits[b, prev_id] /= repetition_penalty
+                        else:
+                            logits[b, prev_id] *= repetition_penalty
+
+            # No-repeat n-gram blocking
+            if no_repeat_ngram_size > 0 and input_ids.size(1) >= no_repeat_ngram_size:
+                for b in range(B):
+                    gen_tokens = input_ids[b].tolist()
+                    for ns in range(len(gen_tokens) - no_repeat_ngram_size + 1):
+                        ngram = tuple(gen_tokens[ns:ns + no_repeat_ngram_size])
+                        if tuple(gen_tokens[-(no_repeat_ngram_size - 1):]) == ngram[:-1]:
+                            logits[b, ngram[-1]] = float("-inf")
+
+            next_ids = logits.argmax(dim=-1, keepdim=True)  # (B, 1)
+
+            # Pad finished sequences
+            next_ids[finished] = pad_id
+            input_ids = torch.cat([input_ids, next_ids], dim=1)
+
+            finished = finished | (next_ids.squeeze(1) == eos_id)
+            if finished.all():
+                break
+
+        # Restore config
+        self.bart.config.use_cache = False
+        if saved_attn_impl is not None:
+            self.bart.config._attn_implementation = saved_attn_impl
+        else:
+            try:
+                del self.bart.config._attn_implementation
+            except AttributeError:
+                pass
+        for obj, orig_val in _patched_layers:
+            if hasattr(obj, "_attn_implementation"):
+                obj._attn_implementation = orig_val
+
+        # Decode text
+        texts = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+
+        # Stack cross-attentions across steps
+        # step_cross_attns: list of (n_layers, B, n_heads, 1, L_eeg)
+        if step_cross_attns:
+            # → (T_out, n_layers, B, n_heads, 1, L_eeg), squeeze the 1
+            stacked = torch.stack(step_cross_attns, dim=0)  # (T, nL, B, nH, 1, Le)
+            stacked = stacked.squeeze(4)                     # (T, nL, B, nH, Le)
+            # Rearrange to (B, nL, nH, T, Le)
+            stacked = stacked.permute(2, 1, 3, 0, 4).contiguous()
+        else:
+            stacked = torch.zeros(B, 1, 1, 1, eeg_mask.size(1), device=device)
+
+        return texts, stacked
+    
     @torch.no_grad()
     def generate_best_of_n(
         self,
