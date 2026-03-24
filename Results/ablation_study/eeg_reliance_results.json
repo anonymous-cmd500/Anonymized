@@ -1,0 +1,44 @@
+{
+  "real_eeg": {
+    "greedy_bertscore_f1": 0.7085,
+    "greedy_bertscore_precision": 0.7108,
+    "greedy_bertscore_recall": 0.7067,
+    "greedy_bleu1": 0.2242,
+    "greedy_bleu2": 0.0892,
+    "greedy_bleu3": 0.0446,
+    "greedy_bleu4": 0.0253,
+    "greedy_rouge1": 0.1891,
+    "greedy_rouge1_precision": 0.1974,
+    "greedy_rouge1_recall": 0.1896,
+    "greedy_rougeL": 0.148,
+    "greedy_wer": 1.0166
+  },
+  "shuffled_eeg": {
+    "greedy_bertscore_f1": 0.6607373356819153,
+    "greedy_bertscore_precision": 0.6645280718803406,
+    "greedy_bertscore_recall": 0.6579706072807312,
+    "greedy_bleu1": 0.16090148877644928,
+    "greedy_bleu2": 0.04173764015374152,
+    "greedy_bleu3": 0.013264075715407999,
+    "greedy_bleu4": 0.005641110469597489,
+    "greedy_rouge1": 0.12953040811808314,
+    "greedy_rouge1_precision": 0.14494427283211178,
+    "greedy_rouge1_recall": 0.13730754964728129,
+    "greedy_rougeL": 0.10150513352766471,
+    "greedy_wer": 1.1604608943721981
+  },
+  "zero_eeg": {
+    "greedy_bertscore_f1": 0.6524127125740051,
+    "greedy_bertscore_precision": 0.6610420942306519,
+    "greedy_bertscore_recall": 0.6444991827011108,
+    "greedy_bleu1": 0.1318541370528371,
+    "greedy_bleu2": 0.022928221980498816,
+    "greedy_bleu3": 0.0049828678896425465,
+    "greedy_bleu4": 0.0012204144020947396,
+    "greedy_rouge1": 0.10377903019883566,
+    "greedy_rouge1_precision": 0.12000597039995084,
+    "greedy_rouge1_recall": 0.09669081035188214,
+    "greedy_rougeL": 0.08416600251317916,
+    "greedy_wer": 1.0070393834982032
+  }
+}
