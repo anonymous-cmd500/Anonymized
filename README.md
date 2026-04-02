@@ -88,7 +88,7 @@ output = gate ⊙ h + (1 - gate) ⊙ null_vector
 
 ### 3. BART Decoder
 
-Uses the **facebook/bart-base** pretrained decoder (6 layers, 768d, 6 attention heads):
+Uses the **facebook/bart-base** pretrained decoder (6 layers, 768d, 12 attention heads):
 
 - **Cross-attention layers** attend over S4D encoder outputs (EEG hidden states)
 - **Self-attention dampening (scale=0.0):** Forward hooks zero out self-attention outputs, forcing the decoder to rely entirely on cross-attention (EEG signal) rather than its own language model prior for content generation
